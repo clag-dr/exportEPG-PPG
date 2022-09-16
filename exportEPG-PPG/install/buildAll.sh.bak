@@ -1,0 +1,6 @@
+echo Building exportEPG..
+echo ... exportEPG
+javac -Xlint  src/ngDPAfsender/Attachment.java -d .
+
+echo All done...
+echo HUSK AT SLETTE mappen src efter installationen.

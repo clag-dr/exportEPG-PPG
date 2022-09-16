@@ -1,0 +1,259 @@
+package exportEPG;
+
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.ResultSet;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
+import java.util.Base64;
+ 
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+
+
+
+public class ExportEPG {
+
+	
+	//final static String secretKey = "ngDP4DR!";
+
+	public static String dbUsername;
+	public static String dbPassword;
+	public static String dbString;
+	private static SecretKeySpec secretKeySpec;
+	final static String secretKey = "epg4DR!";
+	private static byte[] key;
+
+	
+	
+	public static void main(String[] args) {
+		
+		if (args.length==3) {
+			buildConf(args);
+		} else if (args.length==0) {
+			System.out.println("Starting export.....");
+			readConf();
+			Connection dbConnection = getDBConnection(dbUsername,dbPassword,dbString);		
+			exportWeekEGP(dbConnection);		
+			closeDBConnection(dbConnection);				
+			System.out.println("All done.");
+		} else {
+			System.out.println("Syntax: exportEPG [dbUser dbPassword dbConnectString]");
+			
+		}
+		
+    }
+	
+	
+	
+	public static void exportWeekEGP(Connection pConnection) {
+		System.out.println("Exporting.....");
+		java.sql.Blob reportPDF;
+		reportPDF=null;
+        try {            
+            if (pConnection  != null) {
+                Statement stmt = pConnection.createStatement();
+                String sql = "SELECT *\r\n"
+                		+ "  FROM admsys.XXDR_EPG_WEEKSCHEDULES\r\n"
+                		+ " WHERE     (channel_code, week_number, version) IN\r\n"
+                		+ "              (  SELECT channel_code, week_number, MAX (version) version\r\n"
+                		+ "                   FROM admsys.XXDR_EPG_WEEKSCHEDULES\r\n"
+                		+ "               GROUP BY channel_code, week_number)\r\n"
+                		+ "       AND to_char(START_DATE,'YYYYY')||lpad(to_char(week_number),2,'0') >= to_char(SYSDATE,'YYYYY')||lpad((TO_CHAR (SYSDATE, 'IW')),2,'0')\r\n"
+                		+ "       AND week_number >= TO_NUMBER (TO_CHAR (SYSDATE, 'IW'))"
+                		+ "order by channel_code,week_number";
+                ResultSet rs = stmt.executeQuery(sql);
+                int vId=0;
+                String vReportFileName ="";
+
+                while (rs.next())
+                {
+                	vReportFileName=rs.getString("REPORT_FILENAME");
+                	int i = vReportFileName.indexOf("_v");
+                	vReportFileName = vReportFileName.substring( 0,i) + ".pdf";
+                	
+                	reportPDF = (java.sql.Blob)rs.getObject("WEEKSCHEDULE_REP");
+                	System.out.println(vReportFileName + " exported.");
+                    
+                    byte [] array = reportPDF.getBytes( 1, ( int ) reportPDF.length() );
+                    
+                    
+                    File file = new File(vReportFileName);
+                    FileOutputStream out = new FileOutputStream( file );
+                    out.write( array );
+                    out.close();                	
+                	
+                	
+                	
+                }
+                stmt.close();               
+            }
+
+        }  catch (SQLException ex) {
+            ex.printStackTrace();
+        } catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} finally {        	   
+        	System.out.println(" ");
+        }		
+		
+	}
+	
+	
+	
+	
+	
+	public static Connection getDBConnection(String pUserName, String pPassword, String pConnectString) {
+	//	drLog =  new ngDPUtils.DRlog();
+		
+	//	drLog.doOutput("Entering getDBConnection");
+		Connection dbConnection = null;
+		
+		try {
+			Class.forName("oracle.jdbc.OracleDriver");
+		} catch (ClassNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        String dbURL2 = "jdbc:oracle:thin:@"+pConnectString; //apxdbpack.lx.dr.dk:1594:apxprd";
+        String username = pUserName; 
+        String password = pPassword; 
+        try {
+			dbConnection = DriverManager.getConnection(dbURL2, username, password);
+		//	drLog.doOutput("Connected with database");
+        } catch (SQLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        //drLog.doOutput("Exiting getDBConnection");		
+        return dbConnection;
+	}
+		
+	
+
+	public static void closeDBConnection(Connection dbConnection) {
+		//drLog.doOutput("Entering closeDBConnection");
+		try {
+			dbConnection.close();
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}		
+		//drLog.doOutput("Exiting closeDBConnection");
+	}
+		
+	
+
+    public static void setKey(String myKey) 
+    {
+        MessageDigest sha = null;
+        try {
+            key = myKey.getBytes("UTF-8");
+            sha = MessageDigest.getInstance("SHA-1");
+            key = sha.digest(key);
+            key = Arrays.copyOf(key, 16); 
+            secretKeySpec = new SecretKeySpec(key, "AES");
+        } 
+        catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        } 
+        catch (UnsupportedEncodingException e) {
+            e.printStackTrace();
+        }
+    }
+ 
+    public static String encrypt(String strToEncrypt, String secret) 
+    {
+        try
+        {
+            setKey(secret);
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);
+            return Base64.getEncoder().encodeToString(cipher.doFinal(strToEncrypt.getBytes("UTF-8")));
+        } 
+        catch (Exception e) 
+        {
+            System.out.println("Error while encrypting: " + e.toString());
+        }
+        return null;
+    }
+ 
+    public static String decrypt(String strToDecrypt, String secret) 
+    {
+        try
+        {
+            setKey(secret);
+            Cipher cipher = Cipher.getInstance("AES/ECB/PKCS5PADDING");
+            cipher.init(Cipher.DECRYPT_MODE, secretKeySpec);
+            return new String(cipher.doFinal(Base64.getDecoder().decode(strToDecrypt)));
+        } 
+        catch (Exception e) 
+        {
+            System.out.println("Error while decrypting: " + e.toString());
+        }
+        return null;
+    }
+
+    
+    public static void buildConf(String[] pArgs) {
+    	String vArgument;
+        FileWriter confWriter = null;
+
+        try {
+			confWriter = new FileWriter("exportEPG.conf");
+		} catch (IOException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}				
+        for(int i = 0; i < pArgs.length; i++) {
+       	   vArgument = pArgs[i];
+       	   String encryptedString = encrypt(vArgument, secretKey);	       		  
+       	   try {
+			confWriter.write(encryptedString+"\n");
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+        }
+        try {
+			confWriter.close();
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		System.out.println("exportEPG.conf created");
+    }
+    
+    public static  void readConf() {
+		BufferedReader reader;
+		try {
+			
+			reader = new BufferedReader(new FileReader("exportEPG.conf"));
+			dbUsername       = decrypt(reader.readLine(), secretKey);
+			dbPassword    = decrypt(reader.readLine(), secretKey);
+			dbString      = decrypt(reader.readLine(), secretKey);
+	
+			reader.close();
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+    }
+    
+    
+	
+}
+
+
